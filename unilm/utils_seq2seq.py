@@ -478,7 +478,10 @@ class Preprocess4Seq2seqDecode(Pipeline):
 def tokenize_constraints(tokenizer, raw_cts):
 	def tokenize(phrase):
 		a, b = phrase
+		# tokens needs a space in front of them
+		a = ' ' + a
 		if isinstance(b, str):
+			b = ' ' + b
 			# until clause
 			tokens = tokenizer.tokenize(a)
 			token_ids = tokenizer.convert_tokens_to_ids(tokens)

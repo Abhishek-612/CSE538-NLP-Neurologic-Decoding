@@ -129,9 +129,9 @@ def _sequential_topk(timestep: int,
         seq_score = float(seq_score)
         new_item = hypotheses[row].advance(col)
         cand = ConstrainedCandidate(row, col, seq_score, new_item)
-        if hypotheses[row].finished():
+        if new_item.finished():
             finished_candidates.add(cand)
-        elif hypotheses[row].is_valid(col) or int(best_next[row]) == col:
+        elif new_item.is_valid(col): #or int(best_next[row]) == col:
             candidates.add(cand)
 
     hit = np.stack([best_ids, best_word_ids], axis=1).tolist()
@@ -145,7 +145,7 @@ def _sequential_topk(timestep: int,
 
         # (2) add all the constraints that could extend this
         if hyp.positive_state is not None:
-        	nextones = hyp.positive_state.allowed()
+        	nextones = hyp.allowed()
         else:
         	nextones = set()
 

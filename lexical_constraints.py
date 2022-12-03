@@ -376,7 +376,7 @@ class ConstrainedHypothesis:
 
 		:return: True if all the constraints are met.
 		"""
-		return self.valid and self.num_needed() == 0
+		return self.num_needed() == 0
 
 	def is_valid(self, wordid: int) -> bool:
 		"""
@@ -385,13 +385,16 @@ class ConstrainedHypothesis:
 		:param wordid: The wordid to validate.
 		:return: True if all constraints are already met or the word ID is not the EOS id.
 		"""
-		return self.finished() or wordid not in self.eos_id
+		return self.finished() or self.valid and wordid not in self.eos_id
 
 	def eos(self) -> list:
 		"""
 		:return: Return EOS id.
 		"""
 		return self.eos_id
+	
+	def allowed(self):
+		return self.positive_state.allowed() - self.negative_state.allowed()
 
 	def advance(self, word_id: int) -> 'ConstrainedHypothesis':
 		"""
@@ -400,48 +403,50 @@ class ConstrainedHypothesis:
 
 		:param word_id: The word ID to advance on.
 		"""
-		self.negative_state = self.negative_state.advance(word_id)
-		self.positive_state = self.positive_state.advance(word_id)
-		met_phrases = self.negative_state.met_phrases | self.positive_state.met_phrases
+		obj = copy.deepcopy(self)
+		
+		obj.negative_state = obj.negative_state.advance(word_id)
+		obj.positive_state = obj.positive_state.advance(word_id)
+		met_phrases = obj.negative_state.met_phrases | obj.positive_state.met_phrases
 
 		for phrase in met_phrases:
-			for clause in self.clauses:
+			for clause in obj.clauses:
 				if not clause.reversible:
 					continue
 				del_neg, del_pos = clause.met_phrase(phrase)
 				# delete unneeded literals
 				for p in del_neg:
-					if self.negative_state.root.check_phrase(p):
-						self.negative_state.root.delete_phrase(p, clause.idx)
+					if obj.negative_state.root.check_phrase(p):
+						obj.negative_state.root.delete_phrase(p, clause.idx)
 				for p in del_pos:
-					if self.positive_state.root.check_phrase(p):
-						self.positive_state.root.delete_phrase(p, clause.idx)
-				# update self.orders
+					if obj.positive_state.root.check_phrase(p):
+						obj.positive_state.root.delete_phrase(p, clause.idx)
+				# update obj.orders
 				if not clause.reversible:
 					if clause.satisfy:
-						self.orders.append(clause.idx)
+						obj.orders.append(clause.idx)
 					else:
-						self.valid = False
+						obj.valid = False
 
 		# have TrieManagers prune invalid states
-		self.negative_state.prune_states()
-		self.positive_state.prune_states()
+		obj.negative_state.prune_states()
+		obj.positive_state.prune_states()
 
 		# check for in process positive phrases
-		history = [s.trace_arcs() for s in self.positive_state.state]
+		history = [s.trace_arcs() for s in obj.positive_state.state]
 		newly_in_process = set()
 		max_process = 0
 		for phrase in history:
-			for clause in self.clauses:
+			for clause in obj.clauses:
 				phrase_in_process = [c for c in clause.positive if is_prefix(phrase, c)]
 				if not clause.satisfy and bool(phrase_in_process):
 					process_portion = len(phrase) / min([len(x) for x in phrase_in_process])
 					max_process = max(max_process, process_portion)
-					assert clause.idx not in self.orders, 'clause has already satisfied, impossible state'
+					assert clause.idx not in obj.orders, 'clause has already satisfied, impossible state'
 					newly_in_process.add(clause.idx)
-		self.in_process = sorted(newly_in_process)
-		self.max_process = max_process
-		return self
+		obj.in_process = sorted(newly_in_process)
+		obj.max_process = max_process
+		return obj
 
 
 def init_batch(raw_constraints: List[ClauseConstraintList],
