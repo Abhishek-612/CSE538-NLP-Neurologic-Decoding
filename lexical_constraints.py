@@ -248,20 +248,27 @@ class Clause:
 	:param satisfy: whether this clause is satisfied
 	"""
 
-	__slots__ = ('idx', 'positive', 'negative', 'satisfy', 'reversible')
+	__slots__ = ('idx', 'positive', 'negative', 'until', 'satisfy', 'reversible')
 
 	def __init__(self,
 				 idx: int,
 				 positive: List[Phrase],
-				 negative: List[Phrase]) -> None:
+				 negative: List[Phrase],
+				 until) -> None:
 		self.idx = idx
 		self.positive = {tuple(p) for p in positive}
 		self.negative = {tuple(n) for n in negative}
-		self.satisfy = bool(len(negative))
+		self.until = dict()
+		for a, b in until:
+			self.until.setdefault(a, set()).add(b)
 		self.reversible = True
+		self.set_satisfy()
 
 	def __str__(self):
 		return f'clause(id={self.idx}, positive={self.positive}, negative={self.negative}, satisfy={self.satisfy})'
+	
+	def set_satisfy(self):
+		self.satisfy = bool(len(self.negative - set(self.until.keys())))
 	
 	def met_phrase(self, phrase):
 		assert self.reversible == True, "met_phrase called on irreversible clause"
@@ -271,9 +278,12 @@ class Clause:
 			return self.negative, self.positive
 		if phrase in self.negative:
 			self.negative.remove(phrase)
-			self.satisfy = bool(len(self.negative))
+			pos_phrases = self.until.pop(phrase, set())
+			for pos_phrase in pos_phrases:
+				self.positive.remove(pos_phrase)
+			self.set_satisfy()
 			self.reversible = bool(len(self.positive)) or self.satisfy
-			return set([phrase]), set()
+			return set([phrase]), pos_phrases
 		return set(), set()
 
 def is_prefix(pref: List[int],
@@ -305,21 +315,24 @@ class ConstrainedHypothesis:
 		for idx, clause in enumerate(constraint_list):
 			if not clause:
 				continue
-			pos_phrases, neg_phrases = [], []
+			pos_phrases, neg_phrases, untils = [], [], []
 			for l in clause:
 				a, b = l
-				if isinstance(b, str):
-					# TODO until clause
-					pass
+				if isinstance(b, tuple):
+					untils.append((a, b))
+					neg_phrases.append(a)
+					pos_phrases.append(b)
 				elif b == True:
 					pos_phrases.append(a)
-				else:
+				elif b == False:
 					neg_phrases.append(a)
+				else:
+					assert False, 'constraint list malformed type'
 			for p in neg_phrases:
 				t_neg.add_phrase(p, idx)
 			for p in pos_phrases:
 				t_pos.add_phrase(p, idx)
-			self.clauses.append(Clause(idx=idx, positive=pos_phrases, negative=neg_phrases))
+			self.clauses.append(Clause(idx=idx, positive=pos_phrases, negative=neg_phrases, until=untils))
 
 		self.negative_state = TrieManager(t_neg)
 		self.positive_state = TrieManager(t_pos)
@@ -350,11 +363,11 @@ class ConstrainedHypothesis:
 		"""
 		if not self.clauses:
 			return 0
-		return sum([int(c.satisfy and not c.reversible) for c in self.clauses])
+		return sum([int(c.satisfy) for c in self.clauses])
 
 	def met_order(self) -> tuple:
 		"""
-		:return: the constraints that have been met.
+		:return: the constraints that have irreversibly been met.
 		"""
 		return tuple(sorted(self.orders))
 

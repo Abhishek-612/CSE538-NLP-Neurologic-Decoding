@@ -484,10 +484,11 @@ def tokenize_constraints(tokenizer, raw_cts):
 			b = ' ' + b
 			# until clause
 			tokens = tokenizer.tokenize(a)
-			token_ids = tokenizer.convert_tokens_to_ids(tokens)
-			ret = [tokens_ids]
+			token_ids = tuple(tokenizer.convert_tokens_to_ids(tokens))
+			ret = [token_ids]
 			tokens = tokenizer.tokenize(b)
-			token_ids = tokenizer.convert_tokens_to_ids(tokens)
+			token_ids = tuple(tokenizer.convert_tokens_to_ids(tokens))
+			print(b, token_ids)
 			ret.append(token_ids)
 			return ret
 		else:
