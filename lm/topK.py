@@ -144,7 +144,10 @@ def _sequential_topk(timestep: int,
         hyp = hypotheses[row]
 
         # (2) add all the constraints that could extend this
-        nextones = hyp.positive_state.allowed()
+        if hyp.positive_state is not None:
+        	nextones = hyp.positive_state.allowed()
+        else:
+        	nextones = set()
 
         # (3) add the best items (if it's valid)
         best_k = np.argsort(scores[row])[::-1][:beam_size]

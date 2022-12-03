@@ -21,36 +21,36 @@ class Trie:
 	Represents a set of phrasal constraints for an input sentence.
 	These are organized into a trie.
 	"""
-	def __init__(self,
+	def __init__(self, clause_idx: int = None,
 				 raw_phrases: Optional[RawConstraintList] = None,
 				 parent_arc: int = None,
 				 parent_trie: 'Trie' = None) -> None:
-		self.final_ids = set()	# type: Set[int]
+		self.final_ids = {}	# type: Dict[int, Set[int]] (token_id -> set(clause_idx))
 		self.children = {}	# type: Dict[int,'Trie']
 		self.parent_arc = parent_arc
 		self.parent_trie = parent_trie
 
 		if raw_phrases:
 			for phrase in raw_phrases:
-				self.add_phrase(phrase)
+				self.add_phrase(phrase, clause_idx)
 
 	def add_phrase(self,
-				   phrase: List[int]) -> None:
+				   phrase: List[int], clause_idx: int) -> None:
 		"""
 		Recursively adds a phrase to this trie node.
 
 		:param phrase: A list of word IDs to add to this trie node.
 		"""
 		if len(phrase) == 1:
-			self.final_ids.add(phrase[0])
+			self.final_ids.setdefault(phrase[0], set()).add(clause_idx)
 		else:
 			next_word = phrase[0]
 			if next_word not in self.children:
-				self.children[next_word] = Trie(parent_arc=next_word, parent_trie=self)
-			self.step(next_word).add_phrase(phrase[1:])
+				self.children[next_word] = Trie(clause_idx=clause_idx, parent_arc=next_word, parent_trie=self)
+			self.step(next_word).add_phrase(phrase[1:], clause_idx)
 
 	def delete_phrase(self,
-					  phrase: List[int]) -> None:
+					  phrase: List[int], clause_idx: int) -> None:
 		"""
 		Recursively deletes a phrase to this trie node.
 
@@ -58,16 +58,19 @@ class Trie:
 		"""
 		if len(phrase) == 1:
 			assert phrase[0] in self.final_ids, f"Trie {str(self)} \nDo not contain {phrase}"
-			self.final_ids.remove(phrase[0])
+			assert clause_idx in self.final_ids[phrase[0]], f"Trie {str(self)} does not contain clause_idx {clause_idx}"
+			self.final_ids[phrase[0]].remove(clause_idx)
+			if not len(self.final_ids[phrase[0]]):
+				del self.final_ids[phrase[0]]
 		else:
 			next_word = phrase[0]
 			assert next_word in self.children.keys(), f"Trie {str(self)} \nDo not contain {phrase}"
-			self.step(next_word).delete_phrase(phrase[1:])
+			self.step(next_word).delete_phrase(phrase[1:], clause_idx)
 
-		# Move the arc to an empty node to final_ids of its parent
-		for arc in list(self.children):
-			if len(self.children[arc]) == 0:
-				self.children.pop(arc)
+			# Move the arc to an empty node to final_ids of its parent
+			for arc in list(self.children):
+				if len(self.children[arc]) == 0:
+					self.children.pop(arc)
 
 	def check_phrase(self,
 					 phrase: List[int]) -> bool:
@@ -96,6 +99,7 @@ class Trie:
 		phrase.append(word_id)
 		return phrase
 
+	# ?? this isn't recursive... not that it matters...
 	def trace_arcs(self,) -> List[int]:
 		"""
 		Recursively backward to get arc to ancestor
@@ -149,124 +153,13 @@ class Trie:
 
 		:return: The set of word IDs that end a constraint at this state.
 		"""
-		return self.final_ids
+		return set(self.final_ids.keys())
 
-
-class NegativeState:
-	"""
-	Represents the state of a hypothesis in the AvoidTrie.
-	The offset is used to return actual positions in the one-dimensionally-resized array that
-	get set to infinity.
-
-	:param avoid_trie: The trie containing the phrases to avoid.
-	:param state: The current state (defaults to root).
-	"""
-	def __init__(self,
-				 avoid_trie: Trie,
-				 state: List[Trie] = None) -> None:
-
-		self.root = avoid_trie
-		self.state = state if state else [self.root]
-
-	def consume(self, word_id: int) -> 'NegativeState':
-		"""
-		Consumes a word, and updates the state based on it. Returns new objects on a state change.
-
-		The next state for a word can be tricky. Here are the cases:
-		(1) If the word is found in our set of outgoing child arcs, we take that transition.
-		(2) If the word is not found, and we are not in the root state, we need to reset.
-			This means we pretend we were in the root state, and see if we can take a step
-		(3) Otherwise, if we are not already in the root state (i.e., we were partially through
-			the trie), we need to create a new object whose state is the root state
-		(4) Finally, if we couldn't advance and were already in the root state, we can reuse
-			this object.
-
-		:param word_id: The word that was just generated.
-		"""
-		new_state = []
-		for state in set(self.state + [self.root]):
-			if word_id in state.children:
-				new_state.append(state.step(word_id))
-
-		if new_state:
-			return NegativeState(self.root, new_state)
-		else:
-			if len(self.state) == 1 and self.root == self.state[0]:
-				return self
-			else:
-				return NegativeState(self.root, [self.root])
-
-	def avoid(self) -> Set[int]:
-		"""
-		Returns a set of word IDs that should be avoided. This includes the set of final states from the
-		root node, which are single tokens that must never be generated.
-
-		:return: A set of integers representing words that must not be generated next by this hypothesis.
-		"""
-		return self.root.final().union(*[state.final() for state in self.state])
-
-	def __str__(self) -> str:
-		return str(self.state)
-
-
-class NegativeBatch:
-	"""
-	Represents a set of phrasal constraints for all items in the batch.
-	For each hypotheses, there is an AvoidTrie tracking its state.
-
-	:param beam_size: The beam size.
-	:param avoid_list: The list of lists (raw phrasal constraints as IDs, one for each item in the batch).
-	"""
-	def __init__(self,
-				 beam_size: int,
-				 avoid_list: Optional[List[RawConstraintList]] = None) -> None:
-
-		self.avoid_states = []	# type: List[NegativeState]
-
-		# Store the sentence-level tries for each item in their portions of the beam
-		if avoid_list is not None:
-			for literal_phrases in avoid_list:
-				self.avoid_states += [NegativeState(Trie(literal_phrases))] * beam_size
-
-	def reorder(self, indices: torch.Tensor) -> None:
-		"""
-		Reorders the avoid list according to the selected row indices.
-		This can produce duplicates, but this is fixed if state changes occur in consume().
-
-		:param indices: An mx.nd.NDArray containing indices of hypotheses to select.
-		"""
-		if self.avoid_states:
-			self.avoid_states = [self.avoid_states[x] for x in indices.numpy()]
-
-	def consume(self, word_ids: torch.Tensor) -> None:
-		"""
-		Consumes a word for each trie, updating respective states.
-
-		:param word_ids: The set of word IDs.
-		"""
-		word_ids = word_ids.numpy().tolist()
-		for i, word_id in enumerate(word_ids):
-			if self.avoid_states:
-				self.avoid_states[i] = self.avoid_states[i].consume(word_id)
-
-	def avoid(self) -> Tuple[Tuple[int], Tuple[int]]:
-		"""
-		Assembles a list of per-hypothesis words to avoid. The indices are (x, y) pairs into the scores
-		array, which has dimensions (beam_size, target_vocab_size). These values are then used by the caller
-		to set these items to np.inf so they won't be selected. Words to be avoided are selected by
-		consulting both the global trie of phrases and the sentence-specific one.
-
-		:return: Two lists of indices: the x coordinates and y coordinates.
-		"""
-		to_avoid = set()  # type: Set[Tuple[int, int]]
-		for i, state in enumerate(self.avoid_states):
-			for word_id in state.avoid():
-				to_avoid.add((i, word_id))
-
-		return tuple(zip(*to_avoid))  # type: ignore
-
-
-class PositiveState:
+# this shouldn't even be a class
+# the trie should have pi links to efficiently find phrases
+# instead they naively make a new trie for every time step
+# and use this class to manage their set of tries
+class TrieManager:
 	"""
 	Represents a set of words and phrases that must appear in the output.
 	The offset is used to return actual positions in the one-dimensionally-resized array that
@@ -282,7 +175,7 @@ class PositiveState:
 
 		self.root = positive_trie
 		self.state = state if state else [self.root]
-		self.met_phrases = met_phrases
+		self.met_phrases = met_phrases if met_phrases else set()
 
 	def __str__(self):
 		s = f'Root: {self.root}\nState: ['
@@ -290,6 +183,18 @@ class PositiveState:
 			s += f'{state}, '
 		s += f']\nMet_phrases: {self.met_phrases}'
 		return s
+	
+	def prune_states(self):
+		new_states = set()
+		for s in self.state:
+			if s.parent_trie is None:
+				new_states.add(s)
+			else:
+				trace = s.trace_arcs()
+				new_state = self.root.descend(trace)
+				if new_state:
+					new_states.add(new_state)
+		self.state = list(new_states)
 
 	def allowed(self) -> Set[int]:
 		"""
@@ -304,7 +209,7 @@ class PositiveState:
 		allow |= set(self.root.children.keys()).union(*[set(state.children.keys()) for state in self.state])
 		return allow
 
-	def advance(self, word_id: int) -> 'PositiveState':
+	def advance(self, word_id: int) -> 'TrieManager':
 		"""
 		Updates the constraints object based on advancing on word_id.
 		There is a complication, in that we may have started but not
@@ -316,20 +221,21 @@ class PositiveState:
 		:param word_id: The word ID to advance on.
 		:return: A deep copy of the object, advanced on word_id.
 		"""
-		new_state, met_phrases = [], []
+		new_state, met_phrases = [], set()
 		for state in set(self.state + [self.root]):
 			if word_id in state.children:
 				new_state.append(state.step(word_id))
 			if word_id in state.final_ids:
-				met_phrases.append(state.trace_phrase(word_id))
+				met_phrases.add(tuple(state.trace_phrase(word_id)))
 
 		if new_state:
-			return PositiveState(self.root, new_state, met_phrases if met_phrases else None)
+			return TrieManager(self.root, new_state, met_phrases)
 		else:
+			# why do we check if met_phrases is empty? why not self.met_phrases = met_phrases?
 			if len(self.state) == 1 and self.root == self.state[0] and not met_phrases:
 				return self
 			else:
-				return PositiveState(self.root, [self.root], met_phrases if met_phrases else None)
+				return TrieManager(self.root, [self.root], met_phrases)
 
 
 class Clause:
@@ -342,21 +248,33 @@ class Clause:
 	:param satisfy: whether this clause is satisfied
 	"""
 
-	__slots__ = ('idx', 'positive', 'negative', 'satisfy')
+	__slots__ = ('idx', 'positive', 'negative', 'satisfy', 'reversible')
 
 	def __init__(self,
 				 idx: int,
 				 positive: List[Phrase],
-				 negative: List[Phrase],
-				 satisfy: float) -> None:
+				 negative: List[Phrase]) -> None:
 		self.idx = idx
-		self.positive = positive
-		self.negative = negative
-		self.satisfy = satisfy
+		self.positive = {tuple(p) for p in positive}
+		self.negative = {tuple(n) for n in negative}
+		self.satisfy = bool(len(negative))
+		self.reversible = True
 
 	def __str__(self):
 		return f'clause(id={self.idx}, positive={self.positive}, negative={self.negative}, satisfy={self.satisfy})'
-
+	
+	def met_phrase(self, phrase):
+		assert self.reversible == True, "met_phrase called on irreversible clause"
+		if phrase in self.positive:
+			self.satisfy = True
+			self.reversible = False
+			return self.negative, self.positive
+		if phrase in self.negative:
+			self.negative.remove(phrase)
+			self.satisfy = bool(len(self.negative))
+			self.reversible = bool(len(self.positive)) or self.satisfy
+			return set([phrase]), set()
+		return set(), set()
 
 def is_prefix(pref: List[int],
 			  phrase: List[int]):
@@ -382,7 +300,8 @@ class ConstrainedHypothesis:
 		self.eos_id = eos_id if isinstance(eos_id, list) else [eos_id]
 		self.clauses = []  # type: List[Clause]
 
-		hard_neg_pool, soft_neg_pool, pos_pool = [], [], []  # type: RawConstraintList
+		t_pos = Trie()
+		t_neg = Trie()
 		for idx, clause in enumerate(constraint_list):
 			if not clause:
 				continue
@@ -396,32 +315,19 @@ class ConstrainedHypothesis:
 					pos_phrases.append(a)
 				else:
 					neg_phrases.append(a)
-			print('pos_phrases', pos_phrases)
-			print('neg_phrases', neg_phrases)
-			# clause contains single negative literal
-			if not pos_phrases and len(neg_phrases) == 1:
-				hard_neg_pool.extend(neg_phrases)
-				#self.clauses.append(Clause(idx=idx, positive=[], negative=neg_phrases, satisfy=True))
-			# clause contains multiple negative literals or both negative and positive literals
-			elif neg_phrases:
-				soft_neg_pool.extend(neg_phrases)
-				self.clauses.append(Clause(idx=idx, positive=pos_phrases, negative=neg_phrases, satisfy=True))
-			# clause contains only positive literals
-			elif pos_phrases and not neg_phrases:
-				pos_pool.extend(pos_phrases)
-				self.clauses.append(Clause(idx=idx, positive=pos_phrases, negative=[], satisfy=False))
-			else:
-				import ipdb
-				ipdb.set_trace()
-				raise ValueError(f'Invalid state {clause}, should not be reached')
+			for p in neg_phrases:
+				t_neg.add_phrase(p, idx)
+			for p in pos_phrases:
+				t_pos.add_phrase(p, idx)
+			self.clauses.append(Clause(idx=idx, positive=pos_phrases, negative=neg_phrases))
 
-		self.hard_negative_state = NegativeState(Trie(hard_neg_pool)) if hard_neg_pool else None
-		self.soft_negative_state = NegativeState(Trie(soft_neg_pool)) if soft_neg_pool else None
-		self.positive_state = PositiveState(Trie(pos_pool)) if pos_pool else None
+		self.negative_state = TrieManager(t_neg)
+		self.positive_state = TrieManager(t_pos)
 
 		self.orders = []
 		self.in_process = None
 		self.max_process = 0
+		self.valid = True
 
 	def __len__(self) -> int:
 		"""
@@ -444,11 +350,11 @@ class ConstrainedHypothesis:
 		"""
 		if not self.clauses:
 			return 0
-		return sum([int(c.satisfy) for c in self.clauses])
+		return sum([int(c.satisfy and not c.reversible) for c in self.clauses])
 
 	def met_order(self) -> tuple:
 		"""
-		:return: the number of constraints that have been met.
+		:return: the constraints that have been met.
 		"""
 		return tuple(sorted(self.orders))
 
@@ -470,7 +376,7 @@ class ConstrainedHypothesis:
 
 		:return: True if all the constraints are met.
 		"""
-		return self.num_needed() == 0
+		return self.valid and self.num_needed() == 0
 
 	def is_valid(self, wordid: int) -> bool:
 		"""
@@ -480,10 +386,6 @@ class ConstrainedHypothesis:
 		:return: True if all constraints are already met or the word ID is not the EOS id.
 		"""
 		return self.finished() or wordid not in self.eos_id
-
-	def avoid(self) -> Set[int]:
-		banned = self.hard_negative_state.avoid() if self.hard_negative_state is not None else set()
-		return banned
 
 	def eos(self) -> list:
 		"""
@@ -498,63 +400,48 @@ class ConstrainedHypothesis:
 
 		:param word_id: The word ID to advance on.
 		"""
-		obj = copy.deepcopy(self)
+		self.negative_state = self.negative_state.advance(word_id)
+		self.positive_state = self.positive_state.advance(word_id)
+		met_phrases = self.negative_state.met_phrases | self.positive_state.met_phrases
 
-		if obj.soft_negative_state is not None:
-			raise NotImplementedError
-
-		if obj.hard_negative_state is not None:
-			obj.hard_negative_state = obj.hard_negative_state.consume(word_id)
-
-		if obj.positive_state is not None:
-			temp_pos_state = obj.positive_state.advance(word_id)
-			if temp_pos_state.met_phrases is not None:
-				# get newly satisfied positive literals
-				phrases_to_delete = []
-				newly_met_clause = set()
-				for phrase in temp_pos_state.met_phrases:
-					for clause in obj.clauses:
-						if not clause.satisfy and phrase in clause.positive:
-							phrases_to_delete.extend(clause.positive)
-							clause.satisfy = True
-							assert clause.idx not in obj.orders, 'clause has already satisfied, impossible state'
-							newly_met_clause.add(clause.idx)
-				obj.orders.extend(sorted(newly_met_clause))
-
-				# delete newly satisfied literals from positive trie state
-				new_root = copy.deepcopy(temp_pos_state.root)
-				phrases_to_delete = [list(i) for i in set(map(tuple, phrases_to_delete))]
-				for phrase in phrases_to_delete:
-					if new_root.check_phrase(phrase):
-						new_root.delete_phrase(phrase)
-				new_trie_states = set()
-				for state in temp_pos_state.state:
-					# pointer at root state
-					if state.parent_trie is None:
-						new_trie_states.add(new_root)
+		for phrase in met_phrases:
+			for clause in self.clauses:
+				if not clause.reversible:
+					continue
+				del_neg, del_pos = clause.met_phrase(phrase)
+				# delete unneeded literals
+				for p in del_neg:
+					if self.negative_state.root.check_phrase(p):
+						self.negative_state.root.delete_phrase(p, clause.idx)
+				for p in del_pos:
+					if self.positive_state.root.check_phrase(p):
+						self.positive_state.root.delete_phrase(p, clause.idx)
+				# update self.orders
+				if not clause.reversible:
+					if clause.satisfy:
+						self.orders.append(clause.idx)
 					else:
-						trace = state.trace_arcs()
-						new_state = new_root.descend(trace)
-						if new_state is not None:
-							new_trie_states.add(new_state)
-				obj.positive_state = PositiveState(positive_trie=new_root, state=list(new_trie_states))
-			else:
-				obj.positive_state = temp_pos_state
+						self.valid = False
 
-			history = [s.trace_arcs() for s in obj.positive_state.state]
-			newly_in_process = set()
-			max_process = 0
-			for phrase in history:
-				for clause in obj.clauses:
-					phrase_in_process = [c for c in clause.positive if is_prefix(phrase, c)]
-					if not clause.satisfy and bool(phrase_in_process):
-						process_portion = len(phrase) / min([len(x) for x in phrase_in_process])
-						max_process = max(max_process, process_portion)
-						assert clause.idx not in obj.orders, 'clause has already satisfied, impossible state'
-						newly_in_process.add(clause.idx)
-			obj.in_process = sorted(newly_in_process)
-			obj.max_process = max_process
-		return obj
+		# have TrieManagers prune invalid states
+		self.negative_state.prune_states()
+		self.positive_state.prune_states()
+
+		# check for in process positive phrases
+		history = [s.trace_arcs() for s in self.positive_state.state]
+		newly_in_process = set()
+		max_process = 0
+		for phrase in history:
+			for clause in self.clauses:
+				phrase_in_process = [c for c in clause.positive if is_prefix(phrase, c)]
+				if not clause.satisfy and bool(phrase_in_process):
+					process_portion = len(phrase) / min([len(x) for x in phrase_in_process])
+					max_process = max(max_process, process_portion)
+					assert clause.idx not in self.orders, 'clause has already satisfied, impossible state'
+					newly_in_process.add(clause.idx)
+		self.in_process = sorted(newly_in_process)
+		self.max_process = max_process
+		return self
 
 
 def init_batch(raw_constraints: List[ClauseConstraintList],
