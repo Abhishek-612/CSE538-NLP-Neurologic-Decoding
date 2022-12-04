@@ -15,6 +15,6 @@ BEAM_SIZE=6
 PYTHONPATH=../ python decode.py --model_name ${MODEL_RECOVER_PATH} \
   --input_path ${DATA_DIR}/lm/${SPLIT}.txt --output_file ${OUTPUT_FILE} \
   --constraint_file ${DATA_DIR}/clean/constraint/${SPLIT}.constraint.json \
-  --batch_size ${BATCH_SIZE} --beam_size ${BEAM_SIZE} --max_tgt_length 150 --min_tgt_length 5 \
+  --batch_size ${BATCH_SIZE} --beam_size ${BEAM_SIZE} --max_tgt_length 200 --min_tgt_length 5 \
   --ngram_size 3 --length_penalty 0.2 \
-  --prune_factor 50 --sat_tolerance 2 --beta 0 #--early_stop 1.5
+  --prune_factor 1000 --sat_tolerance 2 --beta 0.1 #--early_stop 1.5

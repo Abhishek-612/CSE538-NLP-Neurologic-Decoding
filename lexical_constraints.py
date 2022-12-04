@@ -290,7 +290,7 @@ def is_prefix(pref: List[int],
 			  phrase: List[int]):
 	if not pref:
 		return False
-	return pref == phrase[:len(pref)]
+	return list(pref) == list(phrase[:len(pref)])
 
 
 class ConstrainedHypothesis:
@@ -510,7 +510,7 @@ class ConstrainedCandidate:
 		return self.row == other.row and self.col == other.col
 
 	def __str__(self):
-		return '({}, {}, {}, {})'.format(self.row, self.col, self.score, self.hypothesis.num_met())
+		return '({}, {}, {}, {}, {})'.format(self.row, self.col, self.score, self.rank, self.hypothesis.num_met())
 
 
 if __name__ == '__main__':

@@ -488,13 +488,14 @@ def tokenize_constraints(tokenizer, raw_cts):
 			ret = [token_ids]
 			tokens = tokenizer.tokenize(b)
 			token_ids = tuple(tokenizer.convert_tokens_to_ids(tokens))
-			print(b, token_ids)
 			ret.append(token_ids)
+			#print(b, token_ids)
 			return ret
 		else:
 			assert isinstance(b, bool)
 			tokens = tokenizer.tokenize(a)
 			token_ids = tokenizer.convert_tokens_to_ids(tokens)
+			#print(a, token_ids)
 			return token_ids, b
 	return [[list(map(tokenize, clause)) for clause in ct] for ct in raw_cts]
 
