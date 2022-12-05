@@ -5,6 +5,8 @@ import sys
 import matplotlib.pyplot as plt
 from scipy.stats import rankdata
 import editdistance
+from rouge import Rouge 
+
 
 def print_summ(arr):
 	print('avg', arr.mean())
@@ -17,6 +19,9 @@ def evaluate(x, y, yhat):
 	bleus = np.array(bleus)
 	print('BLEU')
 	print_summ(bleus)
+	rouge = Rouge()
+	rouge_scores = rouge.get_scores(yhat, y)
+	rouge_score_1,rouge_score_2,rouge_score_l=rouge_scores[0]["rouge-1"],rouge_scores[0]["rouge-2"],rouge_scores[0]["rouge-l"]
 	
 	coverages = []
 	order_scores = []
@@ -35,6 +40,10 @@ def evaluate(x, y, yhat):
 	print_summ(coverages)
 	print('Order score')
 	print_summ(order_scores)
+	print('Rouge Score')
+	print("Rouge for 1-gram: ",rouge_score_1)
+	print("Rouge for 2-gram: ",rouge_score_2)
+	print("Rouge for whole input: ",rouge_score_l)
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -42,7 +51,7 @@ if __name__ == '__main__':
 	parser.add_argument('--generated_text', type=str, required=True)
 	args = parser.parse_args()
 	
-	y_fn = '../dataset/lm/%s.txt' % args.split
+	y_fn = '/dataset/lm/%s.txt' % args.split
 	yhat_fn = args.generated_text
 	with open(y_fn) as f:
 		x, y = zip(*[l.split(' = ') for l in f.read().split('\n') if l])
