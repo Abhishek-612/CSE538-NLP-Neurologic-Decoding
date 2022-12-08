@@ -5,3 +5,6 @@ tensorboard==2.4.1
 tensorboardX==2.1
 transformers==3.0.2
 torch==1.7.0
+rouge==1.0.1
+nltk==3.7
+numpy==1.16.6
